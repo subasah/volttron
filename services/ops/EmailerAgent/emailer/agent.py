@@ -254,16 +254,15 @@ class EmailerAgent(Agent):
                                  "recipients": to_addresses,
                                  "subject": mime_message['Subject'],
                                  "message_content": mime_message.as_string()}
-            cfg = self.vip.config.get("config")
-            smtp_address = cfg.get('smtp_address', '')
-            smtp_port = cfg.get('smtp_port', 0)
-            tls_keyfile = cfg.get('tls_keyfile', None)
-            tls_certfile = cfg.get('tls_certfile', None)
-            require_tls = cfg.get('require_tls', False)
-            local_hostname = cfg.get('local_hostname', None)
-            start_tls = cfg.get('start_tls', False)
-            username = cfg.get('username', None)
-            password = cfg.get('password', None)
+            smtp_address = self.current_config.get('smtp_address', '')
+            smtp_port = self.current_config.get('smtp_port', 0)
+            tls_keyfile = self.current_config.get('tls_keyfile', None)
+            tls_certfile = self.current_config.get('tls_certfile', None)
+            require_tls = self.current_config.get('require_tls', False)
+            local_hostname = self.current_config.get('local_hostname', None)
+            start_tls = self.current_config.get('start_tls', False)
+            username = self.current_config.get('username', None)
+            password = self.current_config.get('password', None)
 
             # Instantiate appropriate SMTP object
             s = smtplib.SMTP_SSL(
