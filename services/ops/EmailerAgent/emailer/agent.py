@@ -90,19 +90,19 @@ class EmailerAgent(Agent):
         super(EmailerAgent, self).__init__(**kwargs)
 
         config = utils.load_config(config_path)
-        smtp_address = config.get("smtp-address", None)
-        from_address = config.get("from-address", None)
-        to_address = config.get("to-addresses", None)
-        smtp_port = config.get('smtp-port', 0)
-        tls_keyfile = config.get('tls-keyfile', None)
-        tls_certfile = config.get('tls-certfile', None)
-        require_tls = config.get('require-tls', False)
-        local_hostname = config.get('local-hostname', None)
-        start_tls = config.get('start-tls', False)
+        smtp_address = config.get("smtp_address", None)
+        from_address = config.get("from_address", None)
+        to_address = config.get("to_addresses", None)
+        smtp_port = config.get('smtp_port', 0)
+        tls_keyfile = config.get('tls_keyfile', None)
+        tls_certfile = config.get('tls_certfile', None)
+        require_tls = config.get('require_tls', False)
+        local_hostname = config.get('local_hostname', None)
+        start_tls = config.get('start_tls', False)
         username = config.get('username', None)
         password = config.get('password', None)
 
-        allow_frequency_minutes = config.get("allow-frequency-minutes", 60)
+        allow_frequency_minutes = config.get("allow_frequency_minutes", 60)
         self._allow_frequency_seconds = allow_frequency_minutes * 60
 
         self.default_config = dict(smtp_address=smtp_address,
@@ -150,7 +150,7 @@ class EmailerAgent(Agent):
             s = smtplib.SMTP(self.current_config.get('smtp_address', None))
             s.quit()
         except socket.gaierror:
-            _log.error("INVALID smtp-address found during startup")
+            _log.error("INVALID smtp_address found during startup")
             _log.error("EmailAgent EXITING")
             sys.exit(1)
 

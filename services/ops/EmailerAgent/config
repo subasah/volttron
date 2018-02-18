@@ -1,15 +1,16 @@
 {
-    "smtp-address": "smtp.example.com",
-    "smtp-port": 0,
-    "from-address": "no-reply@example.com",
-    "to-addresses": [
+    "smtp_address": "smtp.example.com",
+    "smtp_port": 0,
+    "from_address": "no-reply@example.com",
+    "to_addresses": [
         "admin1@example.com"
     ],
-    "require-tls": false,
-    "start-tls": false,
-    "tls-keyfile": null,
-    "tls-certfile": null,
-    "local-hostname": null,
-
+    "require_tls": false,
+    "start_tls": false,
+    "tls_keyfile": null,
+    "tls_certfile": null,
+    "local_hostname": null,
+    "username": null,
+    "password": null
     "allow-frequency-minutes": 120
 }
