@@ -93,6 +93,14 @@ class EmailerAgent(Agent):
         smtp_address = config.get("smtp-address", None)
         from_address = config.get("from-address", None)
         to_address = config.get("to-addresses", None)
+        smtp_port = config.get('smtp-port', 0)
+        tls_keyfile = config.get('tls-keyfile', None)
+        tls_certfile = config.get('tls-certfile', None)
+        require_tls = config.get('require-tls', False)
+        local_hostname = config.get('local-hostname', None)
+        start_tls = config.get('start-tls', False)
+        username = config.get('username', None)
+        password = config.get('password', None)
 
         allow_frequency_minutes = config.get("allow-frequency-minutes", 60)
         self._allow_frequency_seconds = allow_frequency_minutes * 60
@@ -104,7 +112,15 @@ class EmailerAgent(Agent):
                                    alert_from_address=from_address,
                                    alert_to_addresses=to_address,
                                    send_alerts_enabled=True,
-                                   record_sent_emails=True)
+                                   record_sent_emails=True,
+                                   smtp_port=smtp_port,
+                                   tls_keyfile=tls_keyfile,
+                                   tls_certfile=tls_certfile,
+                                   require_tls=require_tls,
+                                   local_hostname=local_hostname,
+                                   start_tls=start_tls,
+                                   username=username,
+                                   password=password)
         self.current_config = None
         self.vip.config.set_default("config", self.default_config)
 
@@ -239,8 +255,30 @@ class EmailerAgent(Agent):
                                  "subject": mime_message['Subject'],
                                  "message_content": mime_message.as_string()}
             cfg = self.vip.config.get("config")
-            smtp_address = cfg['smtp_address']
-            s = smtplib.SMTP(smtp_address)
+            smtp_address = cfg.get('smtp_address', '')
+            smtp_port = cfg.get('smtp_port', 0)
+            tls_keyfile = cfg.get('tls_keyfile', None)
+            tls_certfile = cfg.get('tls_certfile', None)
+            require_tls = cfg.get('require_tls', False)
+            local_hostname = cfg.get('local_hostname', None)
+            start_tls = cfg.get('start_tls', False)
+            username = cfg.get('username', None)
+            password = cfg.get('password', None)
+
+            # Instantiate appropriate SMTP object
+            s = smtplib.SMTP_SSL(
+                    host=smtp_address, port=smtp_port, local_hostname=local_hostname, keyfile=tls_keyfile, certfile=tls_certfile
+                ) if require_tls else smtplib.SMTP(
+                    host=smtp_address, port=smtp_port, local_hostname=local_hostname)
+
+            # Use STARTTLS if configured.
+            if start_tls:
+                if s.starttls(tls_keyfile, tls_certfile)[0] != 220:
+                    raise smtplib.SMTPException('STARTTLS Failed')
+
+            # Login if username and password are configured.
+            if username and password:
+                s.login(username, password)
             s.sendmail(from_address, to_addresses, mime_message.as_string())
             s.quit()
             self.vip.health.set_status(STATUS_GOOD,
