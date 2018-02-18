@@ -218,7 +218,7 @@ class EmailerAgent(Agent):
         msg = message.get('message', None)
 
         if msg is None:
-            _log.errro('Email messsage body was null, not sending email')
+            _log.error('Email messsage body was null, not sending email')
             return
 
         self.send_email(from_address, to_addresses, subject, msg)
