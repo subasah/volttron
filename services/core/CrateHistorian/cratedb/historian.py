@@ -75,7 +75,7 @@ from volttron.platform.agent import utils
 from volttron.platform.agent.base_historian import BaseHistorian
 
 
-__version__ = '2.1.0'
+__version__ = '2.2.0'
 
 utils.setup_logging()
 _log = logging.getLogger(__name__)
@@ -287,8 +287,8 @@ class CrateHistorian(BaseHistorian):
 
     @doc_inherit
     def publish_to_historian(self, to_publish_list):
-        _log.debug("publish_to_historian number of items: {}".format(
-            len(to_publish_list)))
+        # _log.debug("publish_to_historian number of items: {}".format(
+        #     len(to_publish_list)))
         start_time = get_utc_seconds_from_epoch()
         if self._client is None:
             success = self._establish_client_connection()
@@ -335,7 +335,7 @@ class CrateHistorian(BaseHistorian):
 
             try:
                 query = insert_data_query(self._schema)
-                _log.debug("Inserting batch data: {}".format(batch_data))
+                # _log.debug("Inserting batch data: {}".format(batch_data))
                 results = cursor.executemany(query, batch_data)
 
                 index = 0
@@ -392,9 +392,9 @@ class CrateHistorian(BaseHistorian):
                 cursor.close()
                 cursor = None
 
-        end_time = get_utc_seconds_from_epoch()
-        full_time = end_time - start_time
-        _log.debug("Took {} seconds to publish.".format(full_time))
+        # end_time = get_utc_seconds_from_epoch()
+        # full_time = end_time - start_time
+        # _log.debug("Took {} seconds to publish.".format(full_time))
 
     @staticmethod
     def _build_single_topic_select_query(start, end, agg_type, agg_period, skip,
@@ -554,6 +554,36 @@ class CrateHistorian(BaseHistorian):
         cursor.execute(sql)
 
         results = [self.get_renamed_topic(x[0]) for x in cursor.fetchall()]
+        return results
+
+    @doc_inherit
+    def query_topics_by_pattern(self, topic_pattern):
+        """ Find the list of topics and its id for a given topic_pattern.
+            Pattern match used is "topic starts with topic_pattern"
+            :return: returns list of dictionary object {topic_name:id}"""
+
+        _log.debug("Querying topic by pattern: {}".format(topic_pattern))
+
+        if topic_pattern[-2:] != ".*":
+            topic_pattern = topic_pattern + ".*"
+            _log.debug("changing topic_pattern to end with .* as pattern might"
+                       "be for a topic_prefix.")
+
+        cursor = self.get_connection().cursor()
+        sql = "SELECT topic FROM {schema}.topic " \
+              "WHERE topic ~* ? ;".format(schema=self._schema)
+
+        _log.debug("Query: {}".format(sql))
+        _log.debug("args:{}".format([topic_pattern]))
+
+        cursor.execute(sql, [topic_pattern])
+
+        # cratedb schema doesn't use topic_id so use just placeholder
+        results = dict()
+        for topic in cursor.fetchall():
+            results[topic[0]] = 1
+
+        _log.debug("Returning topics: {}".format(results))
         return results
 
     def get_connection(self):
