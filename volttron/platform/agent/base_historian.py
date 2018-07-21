@@ -471,6 +471,7 @@ class BaseHistorianAgent(Agent):
             if history_limit_days:
                 history_limit_days = float(history_limit_days)
 
+            subscribe_all_platforms = bool(config.get("subscribe_all_platforms", False))
             submit_size_limit = int(config.get("submit_size_limit", 1000))
             max_time_publishing = float(config.get("max_time_publishing", 30.0))
 
@@ -497,6 +498,7 @@ class BaseHistorianAgent(Agent):
         self._submit_size_limit = submit_size_limit
         self._max_time_publishing = timedelta(seconds=max_time_publishing)
         self._history_limit_days = timedelta(days=history_limit_days) if history_limit_days else None
+        self._subscribe_all_platforms = subscribe_all_platforms
         self._storage_limit_gb = storage_limit_gb
 
         self._readonly = readonly
