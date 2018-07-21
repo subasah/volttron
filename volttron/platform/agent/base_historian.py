@@ -352,6 +352,7 @@ class BaseHistorianAgent(Agent):
                  message_publish_count=10000,
                  history_limit_days=None,
                  storage_limit_gb=None,
+                 subscribe_all_platforms=False,
                  **kwargs):
 
         super(BaseHistorianAgent, self).__init__(**kwargs)
@@ -376,6 +377,7 @@ class BaseHistorianAgent(Agent):
         self._max_time_publishing = float(max_time_publishing)
         self._history_limit_days = history_limit_days
         self._storage_limit_gb = storage_limit_gb
+        self._subscribe_all_platforms = subscribe_all_platforms
         self._successful_published = set()
         # Remove the need to reset subscriptions to eliminate possible data
         # loss at config change.
@@ -413,7 +415,8 @@ class BaseHistorianAgent(Agent):
                                 "capture_record_data": capture_record_data,          
                                 "message_publish_count": self._message_publish_count,
                                 "storage_limit_gb": storage_limit_gb,
-                                "history_limit_days": history_limit_days
+                                "history_limit_days": history_limit_days,
+                                "subscribe_all_platforms": subscribe_all_platforms
                                }
 
         self.vip.config.set_default("config", self._default_config)
@@ -569,7 +572,8 @@ class BaseHistorianAgent(Agent):
                     try:
                         self.vip.pubsub.subscribe(peer='pubsub',
                                                   prefix=prefix,
-                                                  callback=cb).get(timeout=5.0)
+                                                  callback=cb,
+                                                  all_platforms=self._subscribe_all_platforms).get(timeout=5.0)
                         self._current_subscriptions.add(prefix)
                     except (gevent.Timeout, Exception) as e:
                         _log.error("Failed to subscribe to {}: {}".format(prefix, repr(e)))
