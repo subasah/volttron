@@ -573,10 +573,14 @@ class BACnetProxyAgent(Agent):
 
         iocb = self.iocb_class(request)
         self.this_application.submit_request(iocb)
-        result = iocb.ioResult.get(10)
-        if isinstance(result, SimpleAckPDU):
-            return value
-        raise RuntimeError("Failed to set value: " + str(result))
+        try:
+            result = iocb.ioResult.get(10)
+            if isinstance(result, SimpleAckPDU):
+                return value
+        except RuntimeError as e:
+            _log.warning('Unable to write {} on {}: {}'.format(property_name, target_address, e))
+        else:
+            raise RuntimeError("Failed to set value: " + str(result))       
 
     def read_using_single_request(self, target_address, point_map):
         results = {}
@@ -613,8 +617,11 @@ class BACnetProxyAgent(Agent):
         request.pduDestination = Address(target_address)
         iocb = self.iocb_class(request)
         self.this_application.submit_request(iocb)
-        bacnet_results = iocb.ioResult.get(10)
-        return bacnet_results
+        try:
+            bacnet_results = iocb.ioResult.get(10)
+            return bacnet_results
+        except RuntimeError as e:
+            _log.warning('Unable to read {} from {}: {}'.format(property_name, target_address, e))
 
     def _get_access_spec(self, obj_data, properties):
         count = 0
@@ -706,7 +713,10 @@ class BACnetProxyAgent(Agent):
 
                 iocb = self.iocb_class(request)
                 self.this_application.submit_request(iocb)
-                bacnet_results = iocb.ioResult.get(10)
+                try:
+                    bacnet_results = iocb.ioResult.get(10)
+                except RuntimeError as e:
+                    _log.warning('Unable to read {}: {}'.format(target_address, e))
 
                 _log.debug(("Received read response from {target} count: "
                             "{count}").format(count=count,
