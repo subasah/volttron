@@ -717,14 +717,14 @@ class BACnetProxyAgent(Agent):
                     bacnet_results = iocb.ioResult.get(10)
                 except RuntimeError as e:
                     _log.warning('Unable to read {}: {}'.format(target_address, e))
+                else:
+                    _log.debug(("Received read response from {target} count: "
+                                "{count}").format(count=count,
+                                                  target=target_address))
 
-                _log.debug(("Received read response from {target} count: "
-                            "{count}").format(count=count,
-                                              target=target_address))
-
-                for prop_tuple, value in bacnet_results.iteritems():
-                    name = reverse_point_map[prop_tuple]
-                    result_dict[name] = value
+                    for prop_tuple, value in bacnet_results.iteritems():
+                        name = reverse_point_map[prop_tuple]
+                        result_dict[name] = value
 
         return result_dict
 
