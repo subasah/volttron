@@ -244,7 +244,11 @@ class DriverAgent(BasicAgent):
         try:
             results = self.interface.scrape_all()
             register_names = self.interface.get_register_names_view()
-            for point in (register_names - results.viewkeys()):
+            failed_points = register_names - results.viewkeys()
+            if failed_points == register_names:
+                _log.error(('Failed to scrape ' + self.device_name))
+                return
+            for point in (failed_points):
                 depth_first_topic = self.base_topic(point=point)
                 _log.error("Failed to scrape point: "+depth_first_topic)
         except (Exception, gevent.Timeout) as ex:
