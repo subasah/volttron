@@ -69,6 +69,7 @@ class ListenerAgent(Agent):
         self._message = self.config.get('message', DEFAULT_MESSAGE)
         self._heartbeat_period = self.config.get('heartbeat_period',
                                                  DEFAULT_HEARTBEAT_PERIOD)
+        self.topics = self.config.get('topics', '')
         try:
             self._heartbeat_period = int(self._heartbeat_period)
         except:
@@ -97,7 +98,7 @@ class ListenerAgent(Agent):
             self.vip.heartbeat.start_with_period(self._heartbeat_period)
             self.vip.health.set_status(STATUS_GOOD, self._message)
 
-    @PubSub.subscribe('pubsub', '')
+    @PubSub.subscribe('pubsub', self.topics)
     def on_match(self, peer, sender, bus,  topic, headers, message):
         """Use match_all to receive all messages and print them out."""
         if sender == 'pubsub.compat':
