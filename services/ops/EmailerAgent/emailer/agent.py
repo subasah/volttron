@@ -155,26 +155,23 @@ class EmailerAgent(Agent):
         self.current_config['allow_frequency_seconds'] = self.current_config.get(
             'allow_frequency_minutes', 60) * 60
         smtp_address = self.current_config.get('smtp_address', None)
-        self.subscribe_all_platforms = self.current_config.get('subscibe_all_platforms', self.subscribe_all_platforms)
-
+        self.subscribe_all_platforms = self.current_config.get('subscribe_all_platforms', self.subscribe_all_platforms)
         # TODO: Handle UPDATE and DELETE
-        if action == "NEW":
-            try:
-                with gevent.with_timeout(3, self._test_smtp_address, smtp_address):
-                    pass
-            except Exception as e:
-                self.vip.health.set_status(STATUS_BAD, "Invalid SMTP Address")
-
+        #if action == "NEW":
+        #    try:
+        #        with gevent.with_timeout(3, self._test_smtp_address, smtp_address):
+        #            pass
+        #    except Exception as e:
+        #        self.vip.health.set_status(STATUS_BAD, "Invalid SMTP Address")
         self.vip.pubsub.subscribe('pubsub', topics.PLATFORM_SEND_EMAIL,
-                                  self.on_email_message, subscribe_all_platforms=self.subscribe_all_platforms)
-
+                                  self.on_email_message, all_platforms=self.subscribe_all_platforms)
         self.vip.pubsub.subscribe('pubsub', topics.ALERTS_BASE,
-                                  self.on_alert_message, subscribe_all_platforms=self.subscribe_all_platforms)
+                                  self.on_alert_message, all_platforms=self.subscribe_all_platforms)
         self.vip.pubsub.subscribe('pubsub',
                                   prefix=topics.ALERTS.format(agent_class='',
                                                               agent_uuid=''),
-                                  callback=self.on_alert_message, subscribe_all_platforms=self.subscribe_all_platforms)
-
+                                  callback=self.on_alert_message, all_platforms=self.subscribe_all_platforms)
+        
     def on_email_message(self, peer, sender, bus, topic, headers, message):
         """
         Callback used for sending email messages through the pubsub bus.
