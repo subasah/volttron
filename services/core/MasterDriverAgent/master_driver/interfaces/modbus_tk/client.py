@@ -128,6 +128,11 @@ class Field(object):
         self._op_mode = op_mode
 
     @property
+    def is_pad(self):
+        """Returns True if the register is a pad register"""
+        return True if self.format_string == 'x' else False
+
+    @property
     def is_struct_format(self):
         """Returns True if the type of this field is described by a struct
             format string, eg:  ">h", instead of one of the field tuples.
@@ -201,7 +206,7 @@ class Field(object):
 
     @property
     def is_array_field(self):
-        return self.length > 1 and self._type[helpers.FORMAT] != 's'
+        return self.length > 1 and self._type[helpers.FORMAT] not in ['s', 'x']
 
     def value_for_transport(self, value):
         """
@@ -457,7 +462,8 @@ class Request (object):
             # Everything else
             field_values = collections.OrderedDict(
                 [(field, Datum(field.transform_value(value), now))
-                 for field, value in six.moves.zip(self.fields, results)]
+                 for field, value in six.moves.zip(self.fields, results)
+                 if not field.is_pad]
             )
         return field_values
 

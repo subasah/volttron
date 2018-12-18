@@ -75,7 +75,8 @@ data_type_map = dict(
     uint32=helpers.UINT,
     int64=helpers.INT64,
     uint64=helpers.UINT64,
-    float=helpers.FLOAT
+    float=helpers.FLOAT,
+    pad=helpers.PAD
 )
 
 transform_map = dict(
@@ -126,6 +127,11 @@ class CSVRegister(object):
             if match:
                 length = int(match.group(1))
                 datatype = helpers.string(length)
+        if csv_type.startswith('pad'):
+            match = re.match('pad\[(\d+)\]', csv_type)
+            if match:
+                length = int(match.group(1))
+                datatype = helpers.pad(length)
         else:
             datatype = data_type_map.get(csv_type.lower(), csv_type)
 
