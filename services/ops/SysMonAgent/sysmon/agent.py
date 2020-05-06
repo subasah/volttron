@@ -82,8 +82,8 @@ class SysMonAgent(Agent):
     """
 
     IMPLEMENTED_METHODS = ('cpu_percent', 'cpu_times', 'cpu_times_percent', 'cpu_stats', 'cpu_freq', 'load_average',
-                           'memory', 'swap', 'disk_partitions', 'disk_usage', 'disk_io','path_usage', 'path_usage_rate',
-                           'network_io', 'network_connections', 'network_interface_addresses',
+                           'memory', 'swap', 'disk_partitions', 'disk_usage', 'disk_io', 'path_usage',
+                           'path_usage_rate', 'network_io', 'network_connections', 'network_interface_addresses',
                            'network_interface_statistics', 'sensors_temperatures', 'sensors_fans', 'sensors_battery',
                            'boot_time', 'users'  # TODO: Should all of these be pollable? What about cpu_count?
                            )
@@ -93,7 +93,13 @@ class SysMonAgent(Agent):
         self.publish_type = None
         self.base_topic = None
         self._scheduled = []
-        self.last_path_size = None
+
+        # Tracking variables.
+        self.last_path_sizes = {}
+        self.last_disk_read_bytes = None
+        self.last_disk_write_bytes = None
+        self.last_network_received_bytes = None
+        self.last_network_sent_bytes = None
 
         default_config = utils.load_config(config_path)
         self.vip.config.set_default('config', default_config)
@@ -126,13 +132,13 @@ class SysMonAgent(Agent):
         # TODO: Deprecated configuration block. Remove block between 'begin' and 'end' in future release:
         # BEGIN DEPRECATED CONFIGURATION BLOCK.
         for dep in [('cpu_interval', 'cpu_check_interval'),
-                           ('memory', 'memory_check_interval'),
-                           ('disk_usage', 'disk_check_interval')]:
+                    ('memory', 'memory_check_interval'),
+                    ('disk_usage', 'disk_check_interval')]:
             deprecated_interval = contents.pop(dep[1], None)
             if monitors.get(dep[0]) and deprecated_interval:
                 _log.warning('Ignoring deprecated configuration {}, using provided monitor["{}"]["check_interval"'
                              'See SysMonAgent/README.md for information on new configuration format.'
-                             ).format(dep[1], dep[0])
+                             .format(dep[1], dep[0]))
             elif deprecated_interval:
                 monitors[dep[0]] = {'point_name': dep[0], 'check_interval': dep[1], 'poll': True}
                 _log.warning('Starting cpu_percent monitor using deprecated configuration "cpu_check_interval".'
@@ -150,8 +156,9 @@ class SysMonAgent(Agent):
                 params = item['params']
                 action_items.append((getattr(self, method), interval, topic, params))
         if self.publish_type == 'datalogger':
-            for item in action_items:
-                self._periodic_pub(*item)
+             #for item in action_items:
+             #    self._periodic_pub(*item)
+            pass
         else:
             # TODO: Implement record_type messages. Call each method separately (different intervals).
             pass
@@ -185,9 +192,9 @@ class SysMonAgent(Agent):
         self._scheduled.append(sched)
 
     @RPC.export
-    def cpu_percent(self, per_cpu=False):
+    def cpu_percent(self, per_cpu=False, capture_interval=None):
         """Return CPU usage percentage"""
-        cpu_stats = psutil.cpu_percent(percpu=per_cpu)
+        cpu_stats = psutil.cpu_percent(percpu=per_cpu, interval=capture_interval)
         if per_cpu:
             return dict(enumerate(cpu_stats))
         else:
@@ -197,14 +204,14 @@ class SysMonAgent(Agent):
     def cpu_times(self, per_cpu=False, sub_points=None):
         """Return percentage of time the CPU has spent in a given mode."""
         times = psutil.cpu_times_percent(percpu=per_cpu)
-        times = self._format_return(times, sub_points=sub_points)
+        times = self._process_statistics(times, sub_points=sub_points)
         return times
 
     @RPC.export
-    def cpu_times_percent(self, per_cpu=False, sub_points=None, prior_interval=None):
+    def cpu_times_percent(self, per_cpu=False, sub_points=None, capture_interval=None):
         """Return percentage of time the CPU has spent in a given mode."""
-        percentages = psutil.cpu_times_percent(interval=prior_interval, percpu=per_cpu)
-        percentages = self._format_return(percentages, sub_points=sub_points)
+        percentages = psutil.cpu_times_percent(interval=capture_interval, percpu=per_cpu)
+        percentages = self._process_statistics(percentages, sub_points=sub_points)
         return percentages
 
 
@@ -217,147 +224,176 @@ class SysMonAgent(Agent):
     def cpu_stats(self, sub_points=None):
         """Return various CPU statistics."""
         stats = psutil.cpu_stats()
-        stats = self._format_return(stats, sub_points)
+        stats = self._process_statistics(stats, sub_points=sub_points)
         return stats
 
     @RPC.export
     def cpu_freq(self, per_cpu=False, sub_points=None):
         freq = psutil.cpu_freq(percpu=per_cpu)
-        freq = self._format_return(freq, sub_points=sub_points)
+        freq = self._process_statistics(freq, sub_points=sub_points)
         return freq
 
     @RPC.export
     def memory_percent(self):
         """Return memory usage percentage"""
         _log.warning('Method "memory_percent" is deprecated. Use "memory" instead.')
-        return self.memory().percent
+        return self.memory()['percent']
 
     @RPC.export
     def memory(self, sub_points=None):
         """Return memory usage statistics"""
         virtual_memory = psutil.virtual_memory()
-        return self._format_return(virtual_memory, sub_points)
+        return self._process_statistics(virtual_memory, sub_points)
 
     @RPC.export
     def swap(self, sub_points=None):
         """Return swap usage statistics"""
         swap_memory = psutil.swap_memory()
-        if sub_points:
-            return self._format_return(swap_memory, sub_points)
+        return self._process_statistics(swap_memory, sub_points)
 
     @RPC.export
     def disk_partitions(self, all_partitions=False, included_partitions=None, sub_points=None):
         partitions = psutil.disk_partitions(all_partitions)
-        partitions = self._format_return(partitions, sub_points=sub_points, includes=included_partitions)
+        partitions = self._process_statistics(partitions, sub_points=sub_points, includes=included_partitions)
         return partitions
 
     @RPC.export
     def disk_percent(self, disk_path='/'):
         """Return usage of disk mounted at configured path"""
         _log.warning('Method "disk_percent" is deprecated. Use "disk_usage" instead.')
-        return self.disk_usage(disk_path).percent
+        return self.disk_usage(disk_path)['percent']
 
     @RPC.export
-    def disk_usage(self, disk_path='/', sub_points=None):
+    def disk_usage(self, disk_path='/', sub_points=None):  # TODO: disk_path should accept a list.
         """Return disk usage statistics."""
         usage = psutil.disk_usage(disk_path)
-        return self._format_return(usage, sub_points)  # TODO: Should return dict like other methods. (Use _handle_multiples)
+        # TODO: If using a list, the return dict should use the path_name. '/' should become root.
+        return self._process_statistics(usage, sub_points)
 
     @RPC.export
-    def load_average(self, sub_points):
+    def load_average(self, sub_points=None):
         """Return load averages."""
         las = namedtuple('las', ('OneMinute', 'FiveMinute', 'FifteenMinute'))
         averages = las(*psutil.getloadavg())
-        return self._format_return(averages, sub_points)
+        # noinspection PyTypeChecker
+        return self._process_statistics(averages, sub_points)
 
     @RPC.export
-    def path_usage(self, path_name):
+    def path_usage(self, path_name):  # TODO: path_name should accept a list.
         """Return storage used within a filesystem path."""
         try:
             path_size = sum(path.getsize(path.join(dir_path, filename)) for dir_path, dir_names, filenames in
                             walk(path_name) for filename in filenames)
+            # TODO: If using a list, the return dict should use the path_name. '/' should become root.
             return {path_name: path_size}
         except Exception as e:
             # TODO: Can we return an exception from an RPC call? What about where this is called as a periodic?
             _log.error('Exception in path_usage: {}'.format(e))
 
-    @RPC.export
-    def path_usage_rate(self, path_name, interval):
+    @RPC.export  # TODO: interval should allow an arbitrary look-back into a buffer.
+    def path_usage_rate(self, path_name, interval=None):  # TODO: path_name should accept a list.
         """Return rate of change in storage used within a filesystem path in bytes per second."""
-        current_path_size = self.path_usage(path_name)
-        rate_of_change = None
-        if self.last_path_size is not None:
-            rate_of_change = (current_path_size - self.last_path_size) / interval
-        else:
+        current_path_size = {path_name: {'value': self.path_usage(path_name)[path_name],
+                                         'datetime': utils.get_aware_utc_now()}}
+        rate = None
+        if path_name in self.last_path_sizes:
+            rate = (current_path_size[path_name]['value'] - self.last_path_sizes[path_name]['value'])\
+                             / (current_path_size[path_name]['datetime'] - self.last_path_sizes[path_name]['datetime']
+                                ).seconds
+            self.last_path_sizes.update(current_path_size)
+        else:  # TODO: This is not necessary if tracking variables have been initialized.
             _log.error('Unable to calculate path_usage_rate. No prior value.')
-        return {path_name: rate_of_change}
+            self.last_path_sizes.update(current_path_size)
+        # TODO: If using a list, the return dict should use the path_name. '/' should become root.
+        return {path_name: rate}
 
     @RPC.export
-    def disk_io(self, per_nic=False, no_wrap=True, included_nics=None, sub_points=None):
+    def disk_io(self, per_nic=False, no_wrap=True, included_nics=None, check_interval=None, sub_points=None):
         """Return disk input/output statistics."""
         io_stats = psutil.net_io_counters(pernic=per_nic, nowrap=no_wrap)
-        # TODO: Get disk throughput from comparing sequential psutil.disk_io_counters.
-        io_stats = self._format_return(io_stats, sub_points, includes=included_nics)
-        return io_stats
+        # TODO: Get Total disk throughput?
+        retval = self._process_statistics(io_stats, sub_points, includes=included_nics, format_return=False)
+        if sub_points.get('read_throughput'):
+            retval['read_throughput'] = (io_stats.read_bytes - self.last_disk_read_bytes) / check_interval
+        if sub_points.get('write_throughput'):
+            retval['write_throughput'] = (io_stats.write_bytes - self.last_disk_write_bytes) / check_interval
+        retval = self._format_return(retval)
+        return retval
 
-    @RPC.export
-    def network_io(self, per_disk=False, no_wrap=True, included_nics=None, sub_points=None):
+    @RPC.export  # TODO: Add check_interval to params. Make other functions accept **kwargs.
+    def network_io(self, per_disk=False, no_wrap=True, included_nics=None, check_interval=None, sub_points=None):
         """Return network input/output statistics."""
         io_stats = psutil.disk_io_counters(perdisk=per_disk, nowrap=no_wrap)
-        # TODO: Get network bandwidth from comparing sequential psutil.network_io_counters.
-        io_stats = self._format_return(io_stats, sub_points, includes=included_nics)
-        return io_stats
+        # TODO: Get TOTAL network bandwidth?
+        retval = self._process_statistics(io_stats, sub_points, includes=included_nics, format_return=False)
+        if sub_points.get('receive_throughput'):
+            retval['receive_throughput'] = (io_stats.bytes_recv - self.last_network_received_bytes) / check_interval
+        if sub_points.get('send_throughput'):
+            retval['send_throughput'] = (io_stats.bytes_sent - self.last_network_sent_bytes) / check_interval
+        retval = self._format_return(retval)
+        return retval
 
     @RPC.export
     def network_connections(self, kind='inet', sub_points=None):
         """Return system-wide socket connections"""
         connections = psutil.net_connections(kind)
-        connections = self._format_return(connections, sub_points=sub_points)
+        connections = self._process_statistics(connections, sub_points=sub_points, format_return=False)
         for k, v in connections.items():
-            v['family'] = v['family'].name
-            v['type'] = v['type'].name
-            v['laddr'] = v['laddr'].ip + ':' + str(v['laddr'].port) if type(v['laddr']) is psutil._common.addr else ''
-            v['raddr'] = v['raddr'].ip + ':' + str(v['raddr'].port) if type(v['raddr']) is psutil._common.addr else ''
+            if 'family' in v:
+                v['family'] = v['family'].name
+            if 'type' in v:
+                v['type'] = v['type'].name
+            if 'laddr' in v:
+                v['laddr'] = v['laddr'].ip + ':' + str(v['laddr'].port) \
+                    if type(v['laddr']) is psutil._common.addr else ''
+            if 'raddr' in v:
+                v['raddr'] = v['raddr'].ip + ':' + str(v['raddr'].port) \
+                    if type(v['raddr']) is psutil._common.addr else ''
+        connections = self._format_return(connections)
         return connections
 
     @RPC.export
     def network_interface_addresses(self, included_interfaces=None, sub_points=None):
         """Return addresses associated with network interfaces."""
         addresses = psutil.net_if_addrs()
-        addresses = self._format_return(addresses, sub_points, includes=included_interfaces)
+        addresses = self._process_statistics(addresses, sub_points, includes=included_interfaces, format_return=False)
         for k, v in addresses.items():
             for item in v:
-                item['family'] = item['family'].name
+                if 'family' in v:
+                    item['family'] = item['family'].name
+        addresses = self._format_return(addresses)
         return addresses
 
     @RPC.export
     def network_interface_statistics(self, included_interfaces=None, sub_points=None):
         """Return information about each network interface."""
         stats = psutil.net_if_stats()
-        stats = self._format_return(stats, sub_points, includes=included_interfaces)
+        stats = self._process_statistics(stats, sub_points, includes=included_interfaces, format_return=False)
         for k, v in stats.items():
-            v['duplex'] = v['duplex'].name
+            if 'duplex' in v:
+                v['duplex'] = v['duplex'].name
+        stats = self._format_return(stats)
         return stats
 
     @RPC.export
     def sensors_temperatures(self, fahrenheit=False, sub_points=None, included_sensors=None):
         """Return hardware temperatures."""
         temps = psutil.sensors_temperatures(fahrenheit)
-        temps = self._format_return(temps, sub_points, includes=included_sensors)
+        temps = self._process_statistics(temps, sub_points, includes=included_sensors)
         return temps
 
     @RPC.export
     def sensors_fans(self, sub_points=None, included_sensors=None):
         """Return fan speed in RPM."""
         fans = psutil.sensors_fans()
-        fans = self._format_return(fans, sub_points,includes=included_sensors)
+        fans = self._process_statistics(fans, sub_points, includes=included_sensors)
         return fans
 
     @RPC.export
     def sensors_battery(self, sub_points=None):
         """Return battery status information."""
         battery = psutil.sensors_battery()
-        battery = self._format_return(battery, sub_points)
+        battery = self._process_statistics(battery, sub_points)
         return battery
 
     @RPC.export
@@ -369,7 +405,7 @@ class SysMonAgent(Agent):
     def users(self, sub_points=None):
         """Return user session data for users currently connected to the system."""
         users = psutil.users()
-        users = self._format_return(users, sub_points)
+        users = self._process_statistics(users, sub_points)
         return users
 
     @RPC.export
@@ -382,25 +418,36 @@ class SysMonAgent(Agent):
     # TODO: Update README.md to explain new style configuration format.
     # TODO: Make consistent use of single and dict returns. (single saved as point_name, dict with sub_points.)
 
-    def _format_return(self, stats, sub_points, includes=None):
-        if type(stats).__bases__[0] == tuple:
+    def _process_statistics(self, stats, sub_points, includes=None, format_return=True):
+        if type(stats).__bases__[0] == tuple:  # Case: stats is a named tuple.
             stats = {0: stats}
-        elif type(stats) == list:
+        elif type(stats) == list:  # Case: stats is a list of values or named tuples.
             stats = dict(enumerate(stats))
-        else:
+        else:  # Case: stats is a single value
             stats = {'total': stats}
         if includes:
-            includes = includes if type(includes) is list else [includes]
-            stats = {key:value for (key, value) in stats.items() if key in includes}
+            stats = self._filter_includes(includes, stats)
         for k, v in stats.items():
-            if v is list:
+            if v is list:  # Handle nested lists of named tuples
                 for item in v:
-                    self._filter_sub_points(item, sub_points)
+                    stats[k] = self._filter_sub_points(item, sub_points)
             else:
-                self._filter_sub_points(v, sub_points)
+                stats[k] = self._filter_sub_points(v, sub_points)
+        if format_return:
+            stats = self._format_return(stats)
+        return stats
+
+    @staticmethod
+    def _filter_includes(includes, stats):
+        includes = includes if type(includes) is list else [includes]
+        stats = {key: value for (key, value) in stats.items() if key in includes}
+        return stats
+
+    @staticmethod
+    def _format_return(stats):
         keys = list(stats.keys())
-        if len(keys) == 1 and keys[0] == 0:
-            stats = stats[0]
+        if len(keys) == 1 and keys[0] == 0:  # TODO: Do we care if it is an enumerated list or do this for single dicts?
+            stats = stats[0]  # TODO: Does this need another [0] at the end?
         return stats
 
     @staticmethod
