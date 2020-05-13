@@ -50,7 +50,6 @@ from volttron.platform.vip.agent import Agent, RPC
 from volttron.platform.agent import utils
 from volttron.platform.scheduling import periodic
 
-
 utils.setup_logging()
 _log = logging.getLogger(__name__)
 __version__ = '4.0'
@@ -81,12 +80,49 @@ class SysMonAgent(Agent):
     :type config: dict
     """
 
-    IMPLEMENTED_METHODS = ('cpu_percent', 'cpu_times', 'cpu_times_percent', 'cpu_stats', 'cpu_freq', 'load_average',
-                           'memory', 'swap', 'disk_partitions', 'disk_usage', 'disk_io', 'path_usage',
-                           'path_usage_rate', 'network_io', 'network_connections', 'network_interface_addresses',
-                           'network_interface_statistics', 'sensors_temperatures', 'sensors_fans', 'sensors_battery',
-                           'boot_time', 'users'  # TODO: Should all of these be pollable? What about cpu_count?
-                           )
+    IMPLEMENTED_METHODS = (
+    'cpu_percent', 'cpu_times', 'cpu_times_percent', 'cpu_stats', 'cpu_frequency', 'load_average',
+    'memory', 'swap', 'disk_partitions', 'disk_usage', 'disk_io', 'path_usage',
+    'path_usage_rate', 'network_io', 'network_connections', 'network_interface_addresses',
+    'network_interface_statistics', 'sensors_temperatures', 'sensors_fans', 'sensors_battery',
+    'boot_time', 'users'  # TODO: Should all of these be pollable? What about cpu_count?
+    )
+
+    UNITS = {'boot_time': 's',
+             'cpu_count': 'count',
+             'cpu_frequency': 'MHz',
+             'cpu_percent': 'percent',
+             'cpu_stats': 'count',
+             'cpu_times': 's',
+             'cpu_times_percent': 'percent',
+             'disk_io': {'read_count': 'reads', 'write_count': 'writes', 'read_bytes': 'bytes', 'write_bytes': 'bytes',
+                         'read_time': 'ms', 'write_time': 'ms', 'read_merged_count': 'reads',
+                         'write_merged_count': 'writes', 'busy_time': 'ms'},
+             'disk_partitions': None,
+             'disk_percent': 'percent',
+             'disk_usage': {'total': 'bytes', 'used': 'bytes', 'free': 'bytes', 'percent': 'percent'},
+             'load_average': 'load_average',
+             'memory': {'total': 'bytes', 'available': 'bytes', 'percent': 'percent', 'used': 'bytes', 'free': 'bytes',
+                        'active': 'bytes', 'inactive': 'bytes', 'buffers': 'bytes', 'cached': 'bytes',
+                        'shared': 'bytes', 'slab': 'bytes'},
+             'memory_percent': 'percent',
+             'network_connections': None,
+             'network_interface_address': None,
+             'network_interface_statitics': {'isup': 'bool', 'duplex': 'enum', 'speed': 'Mbps', 'mtu': 'bytes'},
+             'network_io': {'bytes_sent': 'bytes', 'bytes_recv': 'bytes', 'packets_sent': 'packets',
+                            'packets_recv': 'packets', 'errin': 'errors', 'errout': 'errors', 'dropin': 'packets',
+                            'dropout': 'packets'},
+             'path_usage': 'bytes',
+             'path_usage_rate': 'bytes/s',
+             'sensors_battery': {'percent': 'percent', 'secsleft': 's', 'power_plugged': 'bool'},
+             'sensors_fans': 'rpm',
+             'sensors_temperatures': 'degrees',
+             'swap': {'total': 'bytes', 'used': 'bytes', 'free': 'bytes', 'percent': 'bytes', 'sin': 'bytes',
+                      'sout': 'bytes'},
+             'users': None
+             }
+
+    publish_data = namedtuple('publish_data', ['value', 'units', 'data_type', 'now'])
 
     def __init__(self, config_path, **kwargs):
         super(SysMonAgent, self).__init__(**kwargs)
@@ -103,8 +139,8 @@ class SysMonAgent(Agent):
 
         default_config = utils.load_config(config_path)
         self.vip.config.set_default('config', default_config)
-        self.vip.config.subscribe(self.on_configure, actions=['NEW', 'UPDATE'], pattern='config')
         self.vip.config.subscribe(self.on_reconfigure, actions=['UPDATE', 'DELETE'], pattern='_runtime_config')
+        self.vip.config.subscribe(self.on_configure, actions=['NEW', 'UPDATE'], pattern='config')
 
     def on_configure(self, config_name, action, contents):
         _log.info('Received configuration store event of type: {}. Loading configuration from config://{}'.format(
@@ -147,26 +183,69 @@ class SysMonAgent(Agent):
         # END DEPRECATED CONFIGURATION BLOCK.
 
         # Start Monitors:
-        action_items = []
         for method in self.IMPLEMENTED_METHODS:
             item = monitors.pop(method, None)
-            if item and item['poll'] is True:
-                topic = self.base_topic + item['point_name']
-                interval = item['check_interval']
-                params = item['params']
-                action_items.append((getattr(self, method), interval, topic, params))
-        if self.publish_type == 'datalogger':
-             #for item in action_items:
-             #    self._periodic_pub(*item)
-            pass
-        else:
-            # TODO: Implement record_type messages. Call each method separately (different intervals).
-            pass
+            if item and item.pop('poll', None) is True:
+                # TODO: Pass method specific publish type and force record publishes for some methods.
+                self._periodic_pub(getattr(self, method), item['check_interval'], item['point_name'], item['params'])
 
         for key in contents:
             _log.warning('Ignoring unrecognized configuration parameter %s', key)
         for key in monitors:
             _log.warning('Ignoring unimplemented monitor method: {}'.format(key))
+
+    def _periodic_pub(self, func, check_interval, point_name, params):
+        """Periodically call func and publish its return value"""
+
+        def _unpack(topic, item, now, entries=None):
+            data_type = type(item)
+            entries = entries if entries else {}
+            if data_type in [int, float, str, bool, None]:
+                # TODO: Figure out how to make self.units work.
+                entries[topic] = self.publish_data(item, self.UNITS[func.__name__], type(item).__name__, now)
+            elif data_type is dict:
+                for k, v in item.items():
+                    _unpack(topic + '/' + k, v, now, entries)
+            else:
+                _log.warning('Unexpected return type from method: {}'.format(func.__name__))
+            return entries
+
+        def _datalogger_publish(parameters):
+            data = func(**parameters)
+            now = utils.get_aware_utc_now()
+            entries = _unpack(point_name, data, now)
+            message = {}
+            header = {'Date': now}
+            for k, v in entries.items():
+                message[k] = {'Readings': [v.now, v.value], 'Units': v.units, 'data_type': v.data_type}
+            self.vip.pubsub.publish(peer='pubsub', topic=self.base_topic, headers=header, message=message)
+
+        def _all_type_publish(parameters):
+            data = func(**parameters)
+            now = utils.get_aware_utc_now()
+            entries = _unpack(point_name, data, now)
+            val, meta = {}, {}
+            for k, v in entries.items():
+                val[k] = v
+                meta[k] = {'Units': v.units, 'data_type': v.data_type}
+            message = {val, meta}
+            header = {'Date': now}
+            self.vip.pubsub.publish(peer='pubsub', topic=self.base_topic, headers=header, message=message)
+
+        def _record_publish(parameters):
+            data = func(**parameters)
+            now = utils.get_aware_utc_now()
+            header = {'Date': now}
+            self.vip.pubsub.publish(peer='pubsub', topic=self.base_topic, headers=header, message=data)
+
+        if self.publish_type == 'record':
+            pub_wrapper = _record_publish
+        elif self.publish_type == 'datalogger':
+            pub_wrapper = _datalogger_publish
+        else:
+            pub_wrapper = _all_type_publish
+        sched = self.core.schedule(periodic(check_interval), pub_wrapper, params)
+        self._scheduled.append(sched)
 
     def on_reconfigure(self, config_name, action, contents):
         _log.info('Received configuration store event of type: {}. Reconfiguring from config://{}'.format(
@@ -174,22 +253,14 @@ class SysMonAgent(Agent):
         # TODO: Write runtime reconfiguration'
         pass
 
-    def _configure(self, config):
-        self.base_topic = config.pop('base_topic', self.base_topic)
-        self.cpu_check_interval = config.pop('cpu_check_interval', self.cpu_check_interval)
-        self.memory_check_interval = config.pop('memory_check_interval', self.memory_check_interval)
-        self.disk_check_interval = config.pop('disk_check_interval', self.disk_check_interval)
-        self.disk_path = config.pop('disk_path', self.disk_path)
-        for key in config:
-            _log.warning('Ignoring unrecognized configuration parameter %s', key)
-
-    def _periodic_pub(self, func, period, topic, params):
-        """Periodically call func and publish its return value"""
-        def pub_wrapper():
-            data = func(**params)
-            self.vip.pubsub.publish(peer='pubsub', topic=topic, message=data)
-        sched = self.core.schedule(periodic(period), pub_wrapper)
-        self._scheduled.append(sched)
+    # def _configure(self, config):
+    #     self.base_topic = config.pop('base_topic', self.base_topic)
+    #     self.cpu_check_interval = config.pop('cpu_check_interval', self.cpu_check_interval)
+    #     self.memory_check_interval = config.pop('memory_check_interval', self.memory_check_interval)
+    #     self.disk_check_interval = config.pop('disk_check_interval', self.disk_check_interval)
+    #     self.disk_path = config.pop('disk_path', self.disk_path)
+    #     for key in config:
+    #         _log.warning('Ignoring unrecognized configuration parameter %s', key)
 
     @RPC.export
     def cpu_percent(self, per_cpu=False, capture_interval=None):
@@ -214,7 +285,6 @@ class SysMonAgent(Agent):
         percentages = self._process_statistics(percentages, sub_points=sub_points)
         return percentages
 
-
     @RPC.export
     def cpu_count(self, logical=True):
         """Return the number of CPU cores if logical=True or the number of physical CPUs if logical=False"""
@@ -228,7 +298,7 @@ class SysMonAgent(Agent):
         return stats
 
     @RPC.export
-    def cpu_freq(self, per_cpu=False, sub_points=None):
+    def cpu_frequency(self, per_cpu=False, sub_points=None):
         freq = psutil.cpu_freq(percpu=per_cpu)
         freq = self._process_statistics(freq, sub_points=sub_points)
         return freq
@@ -297,9 +367,9 @@ class SysMonAgent(Agent):
                                          'datetime': utils.get_aware_utc_now()}}
         rate = None
         if path_name in self.last_path_sizes:
-            rate = (current_path_size[path_name]['value'] - self.last_path_sizes[path_name]['value'])\
-                             / (current_path_size[path_name]['datetime'] - self.last_path_sizes[path_name]['datetime']
-                                ).seconds
+            rate = (current_path_size[path_name]['value'] - self.last_path_sizes[path_name]['value']) \
+                   / (current_path_size[path_name]['datetime'] - self.last_path_sizes[path_name]['datetime']
+                      ).seconds
             self.last_path_sizes.update(current_path_size)
         else:  # TODO: This is not necessary if tracking variables have been initialized.
             _log.error('Unable to calculate path_usage_rate. No prior value.')
@@ -308,27 +378,30 @@ class SysMonAgent(Agent):
         return {path_name: rate}
 
     @RPC.export
-    def disk_io(self, per_nic=False, no_wrap=True, included_nics=None, check_interval=None, sub_points=None):
+    def disk_io(self, per_disk=False, no_wrap=True, included_disks=None, check_interval=None, sub_points=None):
         """Return disk input/output statistics."""
-        io_stats = psutil.net_io_counters(pernic=per_nic, nowrap=no_wrap)
+        io_stats = psutil.disk_io_counters(perdisk=per_disk, nowrap=no_wrap)
         # TODO: Get Total disk throughput?
-        retval = self._process_statistics(io_stats, sub_points, includes=included_nics, format_return=False)
-        if sub_points.get('read_throughput'):
+        retval = self._process_statistics(io_stats, sub_points, includes=included_disks, format_return=False)
+        if sub_points and sub_points.get('read_throughput'):
             retval['read_throughput'] = (io_stats.read_bytes - self.last_disk_read_bytes) / check_interval
-        if sub_points.get('write_throughput'):
+        if sub_points and sub_points.get('write_throughput'):
             retval['write_throughput'] = (io_stats.write_bytes - self.last_disk_write_bytes) / check_interval
         retval = self._format_return(retval)
         return retval
 
     @RPC.export  # TODO: Add check_interval to params. Make other functions accept **kwargs.
-    def network_io(self, per_disk=False, no_wrap=True, included_nics=None, check_interval=None, sub_points=None):
+    def network_io(self, per_nic=False, no_wrap=True, included_nics=None, check_interval=None, sub_points=None):
         """Return network input/output statistics."""
-        io_stats = psutil.disk_io_counters(perdisk=per_disk, nowrap=no_wrap)
+        io_stats = psutil.net_io_counters(pernic=per_nic, nowrap=no_wrap)
         # TODO: Get TOTAL network bandwidth?
         retval = self._process_statistics(io_stats, sub_points, includes=included_nics, format_return=False)
-        if sub_points.get('receive_throughput'):
+        # TODO: Here and in disk_io: this will raise exception if sub_points contains a string.
+        if sub_points and sub_points.get('receive_throughput'):
+            # TODO: Here and in disk_io: This is no longer a namedtuple.
+            # TODO: Here and in disk_io: How to handle per_nic case?
             retval['receive_throughput'] = (io_stats.bytes_recv - self.last_network_received_bytes) / check_interval
-        if sub_points.get('send_throughput'):
+        if sub_points and sub_points.get('send_throughput'):
             retval['send_throughput'] = (io_stats.bytes_sent - self.last_network_sent_bytes) / check_interval
         retval = self._format_return(retval)
         return retval
@@ -359,7 +432,7 @@ class SysMonAgent(Agent):
         addresses = self._process_statistics(addresses, sub_points, includes=included_interfaces, format_return=False)
         for k, v in addresses.items():
             for item in v:
-                if 'family' in v:
+                if 'family' in item:
                     item['family'] = item['family'].name
         addresses = self._format_return(addresses)
         return addresses
@@ -423,14 +496,18 @@ class SysMonAgent(Agent):
             stats = {0: stats}
         elif type(stats) == list:  # Case: stats is a list of values or named tuples.
             stats = dict(enumerate(stats))
+        elif type(stats) == dict:
+            pass  # No action needed, already a dict.
+        elif stats is None:
+            stats = {}
         else:  # Case: stats is a single value
             stats = {'total': stats}
-        if includes:
+        if includes is not None:
             stats = self._filter_includes(includes, stats)
         for k, v in stats.items():
-            if v is list:  # Handle nested lists of named tuples
-                for item in v:
-                    stats[k] = self._filter_sub_points(item, sub_points)
+            if type(v) is list:  # Handle nested lists of named tuples
+                for index, item in enumerate(v):
+                    stats[k][index] = self._filter_sub_points(item, sub_points)
             else:
                 stats[k] = self._filter_sub_points(v, sub_points)
         if format_return:
@@ -446,14 +523,20 @@ class SysMonAgent(Agent):
     @staticmethod
     def _format_return(stats):
         keys = list(stats.keys())
+        # TODO: This leads to odd behavior for disk_partitions, where if only 0 is requested it has a different output
+        #  format than if only 1 is requested.
         if len(keys) == 1 and keys[0] == 0:  # TODO: Do we care if it is an enumerated list or do this for single dicts?
             stats = stats[0]  # TODO: Does this need another [0] at the end?
         return stats
 
     @staticmethod
     def _filter_sub_points(item, sub_points):
-        if sub_points:
+        if type(sub_points) is list:
             return {key: value for (key, value) in item._asdict().items() if key in sub_points}
+        elif type(sub_points) is str:
+            return {key: value for (key, value) in item._asdict().items() if key == sub_points}
+        elif type(sub_points) is dict:
+            return {key: value for (key, value) in item._asdict().items() if sub_points.get(key, False) is True}
         else:
             return {key: value for (key, value) in item._asdict().items()}
 
