@@ -45,6 +45,7 @@ import sys
 import psutil
 from os import path, walk, access, R_OK
 from collections import namedtuple
+from gevent import sleep
 
 from volttron.platform.vip.agent import Agent, RPC
 from volttron.platform.agent import utils
@@ -74,7 +75,8 @@ class SysMonAgent(Agent):
         'network_interface_statistics', 'sensors_temperatures', 'sensors_fans', 'sensors_battery', 'boot_time', 'users'
     )
 
-    RECORD_ONLY_PUBLISH_METHODS = ('disk_partitions', 'network_connections', 'network_interface_address', 'users')
+    RECORD_ONLY_PUBLISH_METHODS = ('disk_partitions', 'network_connections', 'network_interface_address',
+                                   'sensors_temperatures', 'users')
 
     UNITS = {'boot_time': 's',
              'cpu_count': 'count',
@@ -85,7 +87,8 @@ class SysMonAgent(Agent):
              'cpu_times_percent': 'percent',
              'disk_io': {'read_count': 'reads', 'write_count': 'writes', 'read_bytes': 'bytes', 'write_bytes': 'bytes',
                          'read_time': 'ms', 'write_time': 'ms', 'read_merged_count': 'reads',
-                         'write_merged_count': 'writes', 'busy_time': 'ms'},
+                         'write_merged_count': 'writes', 'busy_time': 'ms', 'read_throughput': 'bytes/s',
+                         'write_throughput': 'bytes/s'},
              'disk_partitions': None,
              'disk_percent': 'percent',
              'disk_usage': {'total': 'bytes', 'used': 'bytes', 'free': 'bytes', 'percent': 'percent'},
@@ -99,7 +102,7 @@ class SysMonAgent(Agent):
              'network_interface_statitics': {'isup': 'bool', 'duplex': 'enum', 'speed': 'Mbps', 'mtu': 'bytes'},
              'network_io': {'bytes_sent': 'bytes', 'bytes_recv': 'bytes', 'packets_sent': 'packets',
                             'packets_recv': 'packets', 'errin': 'errors', 'errout': 'errors', 'dropin': 'packets',
-                            'dropout': 'packets'},
+                            'dropout': 'packets', "receive_throughput": 'bytes/s', "send_throughput": 'bytes/s'},
              'path_usage': 'bytes',
              'path_usage_rate': 'bytes/s',
              'sensors_battery': {'percent': 'percent', 'secsleft': 's', 'power_plugged': 'bool'},
@@ -178,9 +181,10 @@ class SysMonAgent(Agent):
         # END DEPRECATED CONFIGURATION BLOCK.
 
         # Start Monitors:
+        sleep(1)  # Wait for a second to pass to avoid divide by zero errors from tracking variables.
         for method in self.IMPLEMENTED_METHODS:
             item = monitors.pop(method, None)
-            if method == 'path_usage_rate' and item.get('path_name'):
+            if method == 'path_usage_rate' and item.get('path_name', None):
                 # Set initial value(s) of self.last_path_sizes for any configured path names.
                 self.path_usage_rate(item.get('path_name'))
             if item and item.pop('poll', None) is True:
@@ -218,24 +222,28 @@ class SysMonAgent(Agent):
             data = func(**parameters)
             now = utils.format_timestamp(utils.get_aware_utc_now())
             entries = _unpack(point_name, data, now)
+            point_base = path.dirname(path.commonprefix(list(entries.keys())))
+            entries = {path.relpath(topic, point_base): value for topic, value in entries.items()}
             message = {}
             header = {'Date': now}
             for k, v in entries.items():
                 message[k] = {'Readings': [v.now, v.value], 'Units': v.units, 'data_type': v.data_type}
-            self.vip.pubsub.publish(peer='pubsub', topic=publish_type + '/' + self.base_topic,
+            self.vip.pubsub.publish(peer='pubsub', topic=publish_type + '/' + self.base_topic + '/' + point_base,
                                     headers=header, message=message)
 
         def _all_type_publish(parameters):
             data = func(**parameters)
             now = utils.format_timestamp(utils.get_aware_utc_now())
             entries = _unpack(point_name, data, now)
+            point_base = path.dirname(path.commonprefix(list(entries.keys())))
+            entries = {path.relpath(topic, point_base): value for topic, value in entries.items()}
             val, meta = {}, {}
             for k, v in entries.items():
                 val[k] = v
                 meta[k] = {'Units': v.units, 'data_type': v.data_type}
             message = [val, meta]
             header = {'Date': now}
-            self.vip.pubsub.publish(peer='pubsub', topic=publish_type + '/' + self.base_topic,
+            self.vip.pubsub.publish(peer='pubsub', topic=publish_type + '/' + self.base_topic + '/' + point_base,
                                     headers=header, message=message)
 
         def _record_publish(parameters):
@@ -358,11 +366,16 @@ class SysMonAgent(Agent):
             path_name = [path_name]
         for path_n in path_name:
             try:
-                if not access(path_n, R_OK):
-                    raise PermissionError('Inaccessible path: path_n. Check read permissions and that path exists.')
-                path_size[path_n] = sum(path.getsize(path.join(dir_path, filename))
-                                        for dir_path, dir_names, filenames
-                                        in walk(path_n) for filename in filenames)
+                if path.isfile(path_n):
+                    path_size[path_n] = path.getsize(path_n)
+                elif path.isdir(path_n):
+                    if not access(path_n, R_OK):
+                        raise PermissionError('Inaccessible path: path_n. Check read permissions and that path exists.')
+                    path_size[path_n] = sum(path.getsize(path.join(dir_path, filename))
+                                            for dir_path, dir_names, filenames
+                                            in walk(path_n) for filename in filenames)
+                else:
+                    raise Exception('Path is neither a file nor a directory: {}'.format(path_n))
             except Exception as e:
                 _log.error('Exception in path_usage: {}'.format(e))
                 path_size[path_n] = -1  # Error code -1 indicates path exception.
@@ -378,13 +391,12 @@ class SysMonAgent(Agent):
         for path_n in path_name:
             current_usage = self.path_usage(path_n)[path_n]
             now = utils.get_aware_utc_now()
-            if current_usage < 0:  # Don't use or store error codes as a usage value.
+            if current_usage > 0:  # Don't use or store error codes as a usage value.
                 current_path_sizes[path_n] = {'value': current_usage, 'dt': now}
                 if path_n in self.last_path_sizes:
                     rates[path_n] = (current_usage - self.last_path_sizes[path_n]['value']) \
-                                    / (now - self.last_path_sizes[path_name]['dt']).seconds
+                                    / (now - self.last_path_sizes[path_n]['dt']).seconds
                 else:
-                    _log.error('Unable to calculate path_usage_rate. No prior value.')
                     rates[path_n] = -2  # Error code -2 indicates no prior tracking data. Call again for valid response.
             else:
                 rates[path_n] = current_usage  # Return error code from self.path_usage.
@@ -398,7 +410,7 @@ class SysMonAgent(Agent):
             per_disk = True
         io_stats = psutil.disk_io_counters(perdisk=per_disk, nowrap=no_wrap)
         retval = self._process_statistics(io_stats, sub_points, includes=included_disks)
-        self._get_throughput(io_stats, retval, per_disk, sub_points, 'read_throughput', 'write_throughout',
+        self._get_throughput(io_stats, retval, per_disk, sub_points, 'read_throughput', 'write_throughput',
                              'read_bytes', 'write_bytes', self.last_disk_read_bytes, self.last_disk_write_bytes)
         retval = self._format_return(retval)
         return retval
@@ -410,7 +422,7 @@ class SysMonAgent(Agent):
             per_nic = True
         io_stats = psutil.net_io_counters(pernic=per_nic, nowrap=no_wrap)
         retval = self._process_statistics(io_stats, sub_points, includes=included_nics)
-        self._get_throughput(io_stats, retval, per_nic, sub_points, 'receive_throughput', 'send_throughout',
+        self._get_throughput(io_stats, retval, per_nic, sub_points, 'receive_throughput', 'send_throughput',
                              'bytes_recv', 'bytes_sent', self.last_network_received_bytes, self.last_network_sent_bytes)
         retval = self._format_return(retval)
         return retval
@@ -420,17 +432,18 @@ class SysMonAgent(Agent):
         """Return system-wide socket connections"""
         connections = psutil.net_connections(kind)
         connections = self._process_statistics(connections, sub_points=sub_points, format_return=False)
-        for k, v in connections.items():
-            if 'family' in v:
-                v['family'] = v['family'].name
-            if 'type' in v:
-                v['type'] = v['type'].name
-            if 'laddr' in v:
-                v['laddr'] = v['laddr'].ip + ':' + str(v['laddr'].port) \
-                    if type(v['laddr']) is psutil._common.addr else ''
-            if 'raddr' in v:
-                v['raddr'] = v['raddr'].ip + ':' + str(v['raddr'].port) \
-                    if type(v['raddr']) is psutil._common.addr else ''
+        if sys.version_info.major >= 3:  # TODO: Deprecated -- not an enum in Python < 3.4.
+            for k, v in connections.items():
+                if 'family' in v:
+                    v['family'] = v['family'].name
+                if 'type' in v:
+                    v['type'] = v['type'].name
+                if 'laddr' in v:
+                    v['laddr'] = v['laddr'].ip + ':' + str(v['laddr'].port) \
+                        if type(v['laddr']) is psutil._common.addr else ''
+                if 'raddr' in v:
+                    v['raddr'] = v['raddr'].ip + ':' + str(v['raddr'].port) \
+                        if type(v['raddr']) is psutil._common.addr else ''
         connections = self._format_return(connections)
         return connections
 
@@ -439,10 +452,11 @@ class SysMonAgent(Agent):
         """Return addresses associated with network interfaces."""
         addresses = psutil.net_if_addrs()
         addresses = self._process_statistics(addresses, sub_points, includes=included_interfaces, format_return=False)
-        for k, v in addresses.items():
-            for item in v:
-                if 'family' in item:
-                    item['family'] = item['family'].name
+        if sys.version_info.major >= 3:  # TODO: Deprecated -- not an enum in Python < 3.4.
+            for k, v in addresses.items():
+                for item in v:
+                    if 'family' in item:
+                        item['family'] = item['family'].name
         addresses = self._format_return(addresses)
         return addresses
 
@@ -451,12 +465,15 @@ class SysMonAgent(Agent):
         """Return information about each network interface."""
         stats = psutil.net_if_stats()
         stats = self._process_statistics(stats, sub_points, includes=included_interfaces, format_return=False)
-        for k, v in stats.items():
-            if 'duplex' in v:
-                v['duplex'] = v['duplex'].name
-        stats = self._format_return(stats)
+        if sys.version_info.major >= 3:  # TODO: Deprecated -- not an enum in Python < 3.4.
+            for k, v in stats.items():
+                if 'duplex' in v:
+                    v['duplex'] = v['duplex'].name
+            stats = self._format_return(stats)
         return stats
 
+    # TODO: Currently marked record only publish, as psutil bug #1708 duplicates core temps.
+    # TODO: Change list into dict of label names, pending resolution of psutil bug #1708 if labels become unique.
     @RPC.export('sensors_temperatures')
     def sensors_temperatures(self, fahrenheit=False, sub_points=None, included_sensors=None):
         """Return hardware temperatures."""
@@ -508,7 +525,7 @@ class SysMonAgent(Agent):
             retval = {}
         else:  # Case: stats is a single value
             retval = {'total': stats}
-        if includes is not None:
+        if includes:
             retval = self._filter_includes(includes, retval)
         for k, v in retval.items():
             if type(v) is list:  # Handle nested lists of named tuples
@@ -522,8 +539,8 @@ class SysMonAgent(Agent):
 
     @staticmethod
     def _filter_includes(includes, stats):
-        includes = includes if type(includes) is list else [includes]
-        return {key: value for (key, value) in stats.items() if key in includes}
+            includes = includes if type(includes) is list else [includes]
+            return {key: value for (key, value) in stats.items() if key in includes}
 
     @staticmethod
     def _format_return(stats):
