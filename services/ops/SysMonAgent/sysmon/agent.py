@@ -243,8 +243,8 @@ class SysMonAgent(Agent):
                 meta[k] = {'Units': v.units, 'data_type': v.data_type}
             message = [val, meta]
             header = {'Date': now}
-            self.vip.pubsub.publish(peer='pubsub', topic=publish_type + '/' + self.base_topic + '/' + point_base,
-                                    headers=header, message=message)
+            topic = publish_type + '/' + self.base_topic + '/' + point_base + '/all'
+            self.vip.pubsub.publish(peer='pubsub', topic=topic, headers=header, message=message)
 
         def _record_publish(parameters):
             data = func(**parameters)
