@@ -47,9 +47,12 @@ from os import path, walk, access, R_OK
 from collections import namedtuple
 from gevent import sleep
 
+from volttron import platform  # Used to get VOLTTRON version #.
 from volttron.platform.vip.agent import Agent, RPC
 from volttron.platform.agent import utils
-from volttron.platform.scheduling import periodic
+if int(platform.__version__.split('.')[0]) >= 6:
+    from volttron.platform.scheduling import periodic
+
 
 utils.setup_logging()
 _log = logging.getLogger(__name__)
@@ -220,14 +223,16 @@ class SysMonAgent(Agent):
 
         def _datalogger_publish(parameters):
             data = func(**parameters)
-            now = utils.format_timestamp(utils.get_aware_utc_now())
+            now = utils.get_aware_utc_now()
+            tz = now.tzname()
+            now = utils.format_timestamp(now)
             entries = _unpack(point_name, data, now)
             point_base = path.dirname(path.commonprefix(list(entries.keys())))
             entries = {path.relpath(topic, point_base): value for topic, value in entries.items()}
             message = {}
             header = {'Date': now}
             for k, v in entries.items():
-                message[k] = {'Readings': [v.now, v.value], 'Units': v.units, 'data_type': v.data_type}
+                message[k] = {'Readings': [v.now, v.value], 'Units': v.units, 'tz': tz, 'data_type': v.data_type}
             self.vip.pubsub.publish(peer='pubsub', topic=publish_type + '/' + self.base_topic + '/' + point_base,
                                     headers=header, message=message)
 
@@ -259,7 +264,10 @@ class SysMonAgent(Agent):
             pub_wrapper = _datalogger_publish
         else:
             pub_wrapper = _all_type_publish
-        sched = self.core.schedule(periodic(check_interval), pub_wrapper, params)
+        if int(platform.__version__.split('.')[0]) >= 6:  # TODO: Deprecated self.core.periodic required to support VOLTTRON < 6.
+            sched = self.core.schedule(periodic(check_interval), pub_wrapper, params)
+        else:
+            sched = self.core.periodic(check_interval, pub_wrapper, kwargs={'parameters': params})
         self._scheduled.append(sched)
 
     def on_reconfigure(self, config_name, action, contents):
