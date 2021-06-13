@@ -1,5 +1,5 @@
 /node_modules/
-.vscode/settings.json
-README.md
-local/config/test.config
-requirements.py
+/home/suba/Desktop/volttron/.vscode/settings.json
+/home/suba/Desktop/volttron/services/core/VolttronCentral/README.md
+/home/suba/Desktop/volttron/local/config/test.config
+/home/suba/Desktop/volttron/requirements.py
