@@ -35,3 +35,9 @@ MnesiaCore.*
 rabbitmq-server.download.tar.xz
 /MagicMock/mock/
 /docs/source/volttron_api/
+requirements.py
+local/config/test.config
+README.md
+README.md
+README.md
+.vscode/settings.json
