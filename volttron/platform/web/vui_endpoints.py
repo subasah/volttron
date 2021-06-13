@@ -142,7 +142,7 @@ class VUIEndpoints(object):
 
     def handle_platforms_historians(self, env: dict, data: dict) -> Response:
 
-        _log.debug("VUI: in handle_platforms_historians SUBA SAH")
+        _log.debug("VUI: in handle_platforms_historians")
         path_info = env.get('PATH_INFO')
 
         _log.debug(f'path_info: {path_info}')
