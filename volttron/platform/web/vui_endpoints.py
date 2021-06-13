@@ -16,8 +16,6 @@ from services.core.ActuatorAgent.actuator.agent import LockError
 
 from volttron.platform.web.topic_tree import DeviceTree
 
-#second, what is this. 
-
 import logging
 _log = logging.getLogger(__name__)
 
