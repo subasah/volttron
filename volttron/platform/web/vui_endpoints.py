@@ -124,7 +124,7 @@ class VUIEndpoints(object):
             (re.compile('^/vui/platforms/[^/]+/devices/?$'), 'callable', self.handle_platforms_devices),
             (re.compile('^/vui/platforms/[^/]+/devices/.*/?$'), 'callable', self.handle_platforms_devices),
             (re.compile('^/vui/platforms/[^/]+/historians/?$'), 'callable', self.handle_platforms_historians),
-            # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/?$'), 'callable', self.handle_platforms_historians_historian),
+            (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/?$'), 'callable', self.handle_platforms_historians_historian),
             # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/topics/?$'), 'callable', self.handle_platforms_historians_topics),
             # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/topics/.+/?$'), 'callable', self.handle_platforms_historians_topics_topic),
             # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/history/?$'), 'callable', self.handle_platforms_historians_history),
@@ -137,7 +137,7 @@ class VUIEndpoints(object):
             # (re.compile('^/vui/historians/?$'), 'callable', self.handle_vui_historians),
             # (re.compile('^/vui/history/?$), 'callable', self.handle_vui_history)
         ]
-
+        
     def handle_platforms_historians(self, env: dict, data: dict) -> Response:
 
         _log.debug("VUI: in handle_platforms_historians")
@@ -146,7 +146,7 @@ class VUIEndpoints(object):
         _log.debug(f'path_info: {path_info}')
         request_method = env.get("REQUEST_METHOD")
 
-        platform = re.match('^/vui/platforms/([^/]+)/historians/?$', '/vui/platforms/suba/historians/').groups()[0]
+        platform = re.match('^/vui/platforms/([^/]+)/historians/?$', path_info).groups()[0]
         _log.debug(f'platform: {platform}')
 
         if request_method == 'GET':
@@ -164,7 +164,6 @@ class VUIEndpoints(object):
                             status='501 Not Implemented', content_type='text/plain')
 
 
-    
     def handle_vui_root(self, env: dict, data: dict) -> Response:
         _log.debug('VUI: In handle_vui_root')
         path_info = env.get('PATH_INFO')
@@ -224,9 +223,7 @@ class VUIEndpoints(object):
         _log.debug(env)
         path_info = env.get('PATH_INFO')
         request_method = env.get("REQUEST_METHOD")
-
         platform = re.match('^/vui/platforms/([^/]+)/agents/?$', path_info).groups()[0]
-
         if request_method == 'GET':
             agents = self._get_agents(platform)
             # TODO: How to catch invalid platform. The routing service seems to catch the exception and just log an
@@ -270,8 +267,7 @@ class VUIEndpoints(object):
         _log.debug('VUI: In handle_platforms_agents_rpc')
         path_info = env.get('PATH_INFO')
         request_method = env.get("REQUEST_METHOD")
-        
-        platform, vip_identity = re.match('^/vui/platforms/([^/]+)/agents/([^/]+)/rpc/?$', '/vui/platforms/suba/agents/control/rpc').groups()
+        platform, vip_identity = re.match('^/vui/platforms/([^/]+)/agents/([^/]+)/rpc/?$', path_info).groups()
         if request_method == 'GET':
             try:
                 method_dict = self._rpc(vip_identity, 'inspect', on_platform=platform)
