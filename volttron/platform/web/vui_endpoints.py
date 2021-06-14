@@ -17,6 +17,7 @@ from services.core.ActuatorAgent.actuator.agent import LockError
 from volttron.platform.web.topic_tree import DeviceTree
 
 import logging
+
 _log = logging.getLogger(__name__)
 
 
@@ -120,11 +121,13 @@ class VUIEndpoints(object):
             (re.compile('^/vui/platforms/[^/]+/agents/?$'), 'callable', self.handle_platforms_agents),
             (re.compile('^/vui/platforms/[^/]+/agents/[^/]+/?$'), 'callable', self.handle_platforms_agents_agent),
             (re.compile('^/vui/platforms/[^/]+/agents/[^/]+/rpc/?$'), 'callable', self.handle_platforms_agents_rpc),
-            (re.compile('^/vui/platforms/[^/]+/agents/[^/]+/rpc/[^/]+/?$'), 'callable', self.handle_platforms_agents_rpc_method),
+            (re.compile('^/vui/platforms/[^/]+/agents/[^/]+/rpc/[^/]+/?$'), 'callable',
+             self.handle_platforms_agents_rpc_method),
             (re.compile('^/vui/platforms/[^/]+/devices/?$'), 'callable', self.handle_platforms_devices),
             (re.compile('^/vui/platforms/[^/]+/devices/.*/?$'), 'callable', self.handle_platforms_devices),
             (re.compile('^/vui/platforms/[^/]+/historians/?$'), 'callable', self.handle_platforms_historians),
-            (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/?$'), 'callable', self.handle_platforms_historians_historian),
+            # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/?$'), 'callable',
+            #  self.handle_platforms_historians_historian),
             # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/topics/?$'), 'callable', self.handle_platforms_historians_topics),
             # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/topics/.+/?$'), 'callable', self.handle_platforms_historians_topics_topic),
             # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/history/?$'), 'callable', self.handle_platforms_historians_history),
@@ -137,7 +140,7 @@ class VUIEndpoints(object):
             # (re.compile('^/vui/historians/?$'), 'callable', self.handle_vui_historians),
             # (re.compile('^/vui/history/?$), 'callable', self.handle_vui_history)
         ]
-        
+
     def handle_platforms_historians(self, env: dict, data: dict) -> Response:
 
         _log.debug("VUI: in handle_platforms_historians")
@@ -150,19 +153,13 @@ class VUIEndpoints(object):
         _log.debug(f'platform: {platform}')
 
         if request_method == 'GET':
-            try:
-                topic_list = self._rpc('platform.historian', 'get_topic_list', on_platform=platform)
-            except TimeoutError as e:
-                return Response(json.dumps({'error': f'Request Timed Out: {e}'}), 408, content_type='application/json')
-            except Exception as e:
-                return Response(json.dumps({'error' f'Unexpected Error: {e}'}), 500, content_type='application/json')
-
-            response = json.dumps({'topic_list': topic_list})
+            agents = self._get_agents(platform)
+            response = json.dumps(
+                {agent: normpath(path_info + '/' + agent) for agent in agents.keys() if 'historian' in agent})
             return Response(response, 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
                             status='501 Not Implemented', content_type='text/plain')
-
 
     def handle_vui_root(self, env: dict, data: dict) -> Response:
         _log.debug('VUI: In handle_vui_root')
@@ -231,6 +228,7 @@ class VUIEndpoints(object):
             #  service seems to have that, but it isn't exposed as an RPC call anywhere that I can find....
             # return Response(json.dumps({'error': f'Platform: {platform} did not respond to request for agents.'}),
             #                400, content_type='application/json')
+            # response = json.dumps({agent: normpath(path_info + '/' + agent) for agent in agents.keys()})
             response = json.dumps({agent: normpath(path_info + '/' + agent) for agent in agents.keys()})
             return Response(response, 200, content_type='application/json')
         else:
@@ -339,6 +337,7 @@ class VUIEndpoints(object):
         :param data:
         :return:
         """
+
         def _get_allowed_write_selection(points, topic, regex, tag):
             # Query parameters:
             write_all = self._to_bool(query_params.get('write-all', 'false'))
@@ -418,7 +417,7 @@ class VUIEndpoints(object):
                     ret_dict = defaultdict(dict)
                     if return_values:
                         ret_values = self._rpc('platform.actuator', 'get_multiple_points',
-                                              [d.topic for d in points], on_platform=platform)
+                                               [d.topic for d in points], on_platform=platform)
                         for k, v in ret_values[0].items():
                             ret_dict[k]['value'] = v
                         for k, e in ret_values[1].items():
@@ -564,7 +563,7 @@ class VUIEndpoints(object):
         return agent_dict
 
     def _rpc(self, vip_identity, method, *args, on_platform=None, **kwargs):
-        external_platform = {'external_platform': on_platform}\
+        external_platform = {'external_platform': on_platform} \
             if on_platform != self.local_instance_name else {}
         result = self._agent.vip.rpc.call(vip_identity, method, *args, **external_platform, **kwargs).get(timeout=5)
         return result
