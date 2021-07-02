@@ -167,7 +167,7 @@ class VUIEndpoints(object):
             finally:
                 if self.local_instance_name not in platforms:
                     platforms.insert(0, self.local_instance_name)
-            response = json.dumps({p: normpath(path_info + '/' + p) for p in platforms})
+            response = json.dumps(self._route_options(path_info, platforms))
             return Response(response, 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
@@ -206,7 +206,7 @@ class VUIEndpoints(object):
             #  service seems to have that, but it isn't exposed as an RPC call anywhere that I can find....
             # return Response(json.dumps({'error': f'Platform: {platform} did not respond to request for agents.'}),
             #                400, content_type='application/json')
-            response = json.dumps({agent: normpath(path_info + '/' + agent) for agent in agents.keys()})
+            response = json.dumps(self._route_options(path_info, agents.keys()))
             return Response(response, 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
@@ -252,7 +252,7 @@ class VUIEndpoints(object):
             except Exception as e:
                 return Response(json.dumps({'error' f'Unexpected Error: {e}'}), 500, content_type='application/json')
 
-            response = {method: normpath(path_info + '/' + method) for method in (method_dict.get('methods'))}
+            response = self._route_options(path_info, method_dict.get('methods'))
             return Response(json.dumps(response), 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
@@ -409,8 +409,11 @@ class VUIEndpoints(object):
                     return Response(json.dumps(ret_dict), 200, content_type='application/json')
                 else:
                     # All topics are not complete to points and read_all=False -- return route to next segments:
-                    ret_dict = device_tree.get_children_dict([n.identifier for n in topic_nodes], replace_topic=topic,
-                                                             prefix=f'/vui/platforms/{platform}')
+                    ret_dict = {
+                        'route_options': device_tree.get_children_dict([n.identifier for n in topic_nodes],
+                                                                       replace_topic=topic,
+                                                                       prefix=f'/vui/platforms/{platform}')
+                    }
                     return Response(json.dumps(ret_dict), 200, content_type='application/json')
 
             # TODO: Move this exception handling up to a wrapper.
@@ -498,7 +501,7 @@ class VUIEndpoints(object):
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
                             status='501 Not Implemented', content_type='text/plain')
 
-    def _find_active_sub_routes(self, segments: list, path_info: str = None) -> dict or list:
+    def _find_active_sub_routes(self, segments: list, path_info: str = None, enclose=True) -> dict or list:
         """
         Returns active routes with constant segments at the end of the route.
                 If no path_info is provided, return only a list of the keys.
@@ -513,7 +516,7 @@ class VUIEndpoints(object):
         if not path_info:
             return keys
         else:
-            return {k: normpath(path_info + '/' + k) for k in keys}
+            return self._route_options(path_info, keys) if enclose else self._route_options(path_info, keys, False)
 
     # TODO: Add running parameter.
     def _get_agents(self, platform, running=True):
@@ -543,6 +546,11 @@ class VUIEndpoints(object):
             if on_platform != self.local_instance_name else {}
         result = self._agent.vip.rpc.call(vip_identity, method, *args, **external_platform, **kwargs).get(timeout=5)
         return result
+
+    @staticmethod
+    def _route_options(path_info, option_segments, enclosing_dict=True):
+        route_options =  {segment: normpath('/'.join([path_info, segment])) for segment in option_segments}
+        return route_options if not enclosing_dict else {'route_options': route_options}
 
     @staticmethod
     def _to_bool(values):
