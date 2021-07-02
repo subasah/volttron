@@ -149,7 +149,7 @@ class VUIEndpoints(object):
             return Response(response, 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
-                            status='501 Not Implemented', content_type='text/plain')
+                            status=501, content_type='text/plain')
 
     def handle_platforms(self, env: dict, data: dict) -> Response:
         _log.debug('VUI: In handle_platforms')
@@ -171,7 +171,7 @@ class VUIEndpoints(object):
             return Response(response, 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
-                            status='501 Not Implemented', content_type='text/plain')
+                            status=501, content_type='text/plain')
 
     def handle_platforms_platform(self, env: dict, data: dict) -> Response:
         _log.debug('VUI: In handle_platforms_platform')
@@ -182,7 +182,7 @@ class VUIEndpoints(object):
             return Response(response, 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
-                            status='501 Not Implemented', content_type='text/plain')
+                            status=501, content_type='text/plain')
 
     def handle_platforms_agents(self, env: dict, data: dict) -> Response:
         """
@@ -210,7 +210,7 @@ class VUIEndpoints(object):
             return Response(response, 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
-                            status='501 Not Implemented', content_type='text/plain')
+                            status=501, content_type='text/plain')
 
     def handle_platforms_agents_agent(self, env: dict, data: dict) -> Response:
         """
@@ -230,7 +230,7 @@ class VUIEndpoints(object):
             return Response(response, 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
-                            status='501 Not Implemented', content_type='text/plain')
+                            status=501, content_type='text/plain')
 
     def handle_platforms_agents_rpc(self, env: dict, data: dict) -> Response:
         """
@@ -256,7 +256,7 @@ class VUIEndpoints(object):
             return Response(json.dumps(response), 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
-                            status='501 Not Implemented', content_type='text/plain')
+                            status=501, content_type='text/plain')
 
     def handle_platforms_agents_rpc_method(self, env: dict, data: dict) -> Response:
         """
@@ -305,7 +305,7 @@ class VUIEndpoints(object):
             return Response(json.dumps(result), 200, content_type='application/json')
         else:
             return Response(f'Endpoint {request_method} {path_info} is not implemented.',
-                            status='501 Not Implemented', content_type='text/plain')
+                            status=501, content_type='text/plain')
 
     def handle_platforms_devices(self, env: dict, data: dict) -> Response:
         """
