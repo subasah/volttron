@@ -15,6 +15,7 @@ from services.core.PlatformDriverAgent.platform_driver.agent import OverrideErro
 from services.core.ActuatorAgent.actuator.agent import LockError
 
 from volttron.platform.web.topic_tree import DeviceTree
+from volttron.platform.web.topic_tree import TopicTree
 
 import logging
 
@@ -126,9 +127,13 @@ class VUIEndpoints(object):
             (re.compile('^/vui/platforms/[^/]+/devices/?$'), 'callable', self.handle_platforms_devices),
             (re.compile('^/vui/platforms/[^/]+/devices/.*/?$'), 'callable', self.handle_platforms_devices),
             (re.compile('^/vui/platforms/[^/]+/historians/?$'), 'callable', self.handle_platforms_historians),
-            # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/?$'), 'callable',
-            #  self.handle_platforms_historians_historian),
-            # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/topics/?$'), 'callable', self.handle_platforms_historians_topics),
+            (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/?$'), 'callable',
+             self.handle_platforms_historians_historian),
+            (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/topics/?$'), 'callable',
+             self.handle_platforms_historians_topics),
+            (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/topics/.*/?$'), 'callable',
+             self.handle_platforms_historians_topics),
+
             # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/topics/.+/?$'), 'callable', self.handle_platforms_historians_topics_topic),
             # (re.compile('^/vui/platforms/[^/]+/historians/[^/]+/history/?$'), 'callable', self.handle_platforms_historians_history),
             # (re.compile('^/vui/platforms/[^/]+/pubsub(/.*/)?$'), 'callable', self.handle_platforms_pubsub),
@@ -140,6 +145,32 @@ class VUIEndpoints(object):
             # (re.compile('^/vui/historians/?$'), 'callable', self.handle_vui_historians),
             # (re.compile('^/vui/history/?$), 'callable', self.handle_vui_history)
         ]
+
+    def handle_platforms_historians_historian(self, env: dict, data: dict) -> Response:
+        _log.debug("VUI: in handle_platforms_historians_historian")
+        path_info = env.get('PATH_INFO')
+        _log.debug(f'path_info: {path_info}')
+        request_method = env.get("REQUEST_METHOD")
+
+        platform, vip_identity = re.match('^/vui/platforms/([^/]+)/historians/([^/]+)/?$', path_info).groups()
+
+        _log.debug(f'platform: {platform}')
+        _log.debug(f'vip_identity: {vip_identity}')
+
+        if request_method == 'GET':
+            try:
+                topic_list = self._rpc(vip_identity, 'get_topic_list', on_platform=platform)
+
+            except TimeoutError as e:
+                return Response(json.dumps({'error': f'Request Timed Out: {e}'}), 408, content_type='application/json')
+            except Exception as e:
+                return Response(json.dumps({'error' f'Unexpected Error: {e}'}), 500, content_type='application/json')
+
+            response = json.dumps({'topic_list': topic_list})
+            return Response(response, 200, content_type='application/json')
+        else:
+            return Response(f'Endpoint {request_method} {path_info} is not implemented.',
+                            status='501 Not Implemented', content_type='text/plain')
 
     def handle_platforms_historians(self, env: dict, data: dict) -> Response:
 
@@ -374,10 +405,12 @@ class VUIEndpoints(object):
         no_topic = re.match('^/vui/platforms/([^/]+)/devices/?$', path_info)
         if no_topic:
             platform, topic = no_topic.groups()[0], ''
+
         else:
             platform, topic = re.match('^/vui/platforms/([^/]+)/devices/(.*)/?$', path_info).groups()
             topic = topic[:-1] if topic[-1] == '/' else topic
 
+        _log.debug(f'TOPIC: {topic}')
         # Resolve tags if the tag query parameter is set:
         if tag:
             try:
@@ -389,13 +422,23 @@ class VUIEndpoints(object):
             tag_list = None
         # Prune device tree and get nodes matching topic:
         try:
+            # all above for the historinas
             # TODO: Should we be storing this tree to use for faster requests later? How to keep it updated?
             device_tree = DeviceTree.from_store(platform, self._rpc).prune(topic, regex, tag_list)
+
+            _log.debug(f'DEVICE_TREE: {device_tree}')
+
+            # rpc call for get_topic_list from the from_hsitorians()
             topic_nodes = device_tree.get_matches(f'devices/{topic}' if topic else 'devices')
+            _log.debug(f'TOPIC_NODES: {topic_nodes}')
             if not topic_nodes:
                 return Response(json.dumps({f'error': f'Device topic {topic} not found on platform: {platform}.'}),
                                 400, content_type='application/json')
+
             points = device_tree.points()
+            _log.debug(f'POINTS: {points}')
+
+            # leaves() use this for historians
         # TODO: Move this exception handling up to a wrapper.
         except Timeout as e:
             return Response(json.dumps({'error': f'RPC Timed Out: {e}'}), 504, content_type='application/json')
@@ -406,18 +449,30 @@ class VUIEndpoints(object):
         if request_method == 'GET':
             # Query parameters:
             read_all = query_params.get('read-all', False)
+            # text from text file, 
+
             return_routes = query_params.get('routes', True)
-            return_writability = query_params.get('writability', True)
+            return_writability = query_params.get('writability', True)  # not
             return_values = query_params.get('values', True)
-            return_config = query_params.get('config', False)
+            # star end ecpace count order are there into 
+            return_config = query_params.get('config', False)  # not#
+
+            _log.debug(f'RETURN_VALUES: {return_values}')
+            _log.debug(f'RETURN_VALUES_TOPIC: {[d.topic for d in points]}')
 
             try:
+                # follows the pattern formt he historians
                 if read_all or all([n.is_point() for n in topic_nodes]):
                     # Either leaf values are explicitly requested, or all nodes are already points -- Return points:
                     ret_dict = defaultdict(dict)
+                    _log.debug(f'FROM IF:')
                     if return_values:
                         ret_values = self._rpc('platform.actuator', 'get_multiple_points',
                                                [d.topic for d in points], on_platform=platform)
+
+                        _log.debug(f'RET_VALUES: {ret_values}')
+                        _log.debug(f'RET_VALUES_TOPIC: {[d.topic for d in points]}')
+
                         for k, v in ret_values[0].items():
                             ret_dict[k]['value'] = v
                         for k, e in ret_values[1].items():
@@ -432,6 +487,8 @@ class VUIEndpoints(object):
 
                     return Response(json.dumps(ret_dict), 200, content_type='application/json')
                 else:
+                    # exact the same
+                    _log.debug(f'FROM ELSE:')
                     # All topics are not complete to points and read_all=False -- return route to next segments:
                     ret_dict = device_tree.get_children_dict([n.identifier for n in topic_nodes], replace_topic=topic,
                                                              prefix=f'/vui/platforms/{platform}')
@@ -445,6 +502,9 @@ class VUIEndpoints(object):
                                 400, content_type='application/json')
 
         elif request_method == 'PUT':
+
+            # post for historians
+            # insert record into historians
             try:
                 confirm_values, selected_routes, unwritables = _get_allowed_write_selection(points, topic, regex, tag)
             except ValueError as e:
@@ -453,10 +513,22 @@ class VUIEndpoints(object):
             # Set selected points:
             try:
                 set_value = data.get('value')
+                # metadeta API definiit: 
+                # values 
+                # list of dic or dic in them 
+
+                # dont worry about unwritable   
                 topics_values = [(d.topic, set_value) for d in points if d.topic not in unwritables]
+
+                # insert into the historians new record since it's the insert statement
+                # 'platform.historian' to look into the method for the insert look into base_historians
+                # already exits 
+                # matching the data types 
+
                 ret_errors = self._rpc('platform.actuator', 'set_multiple_points',
                                        requester_id=self._agent.core.identity, topics_values=topics_values,
                                        on_platform=platform)
+
                 ret_dict = defaultdict(dict)
                 for k in selected_routes.keys():
                     ret_dict[k]['route'] = selected_routes[k]
@@ -516,6 +588,114 @@ class VUIEndpoints(object):
                 return Response(json.dumps({'error': f'RPC Timed Out: {e}'}), 504, content_type='application/json')
             except Exception as e:
                 return Response(json.dumps({f'error': f'Error querying device topic {topic}: {e}'}),
+                                400, content_type='application/json')
+
+        else:
+            return Response(f'Endpoint {request_method} {path_info} is not implemented.',
+                            status='501 Not Implemented', content_type='text/plain')
+
+    def handle_platforms_historians_topics(self, env: dict, data: dict) -> Response:
+        """
+        Endpoints for /vui/platforms/:platform/historians/topics and /vui/platforms/:platform/historians/topics/:topic/
+        :param env:
+        :param data:
+        :return:
+        """
+
+        path_info = env.get('PATH_INFO')
+        request_method = env.get("REQUEST_METHOD")
+        query_params = url_decode(env['QUERY_STRING'])
+
+        tag = query_params.get('tag')
+        regex = query_params.get('regex')
+
+        start = query_params.get('start')
+        end = query_params.get('end')
+
+        skip = int(query_params.get('skip') if query_params.get('skip') else 0)
+        count = query_params.get('count')
+        order = query_params.get('order') if query_params.get('order') else 'FIRST_TO_LAST'
+        agg_type = None
+        agg_period = None
+
+        no_topic = re.match('^/vui/platforms/([^/]+)/historians/([^/]+)/topics/?$', path_info)
+        if no_topic:
+            platform, historian, topic = no_topic.groups()[0], no_topic.groups()[1], ''
+        else:
+            platform, historian, topic = re.match('^/vui/platforms/([^/]+)/historians/([^/]+)/topics/(.*)/?$',
+                                                  path_info).groups()
+            topic = topic[:-1] if topic[-1] == '/' else topic
+
+        # Resolve tags if the tag query parameter is set:
+        if tag:
+            try:
+                tag_list = self._rpc('platform.tagging', 'get_topics_by_tags', tag, on_platform=platform).get(timeout=5)
+            except Timeout as e:
+                return Response(json.dumps({'error': f'Tagging Service timed out: {e}'}),
+                                504, content_type='application/json')
+        else:
+            tag_list = None
+        try:
+            historian_topics = self._rpc(historian, 'get_topic_list', on_platform=platform)
+            historian_tree = TopicTree(historian_topics, 'historians').prune(topic, regex, tag_list)
+            topic_nodes = historian_tree.get_matches(f'historians/{topic}' if topic else 'historians')
+
+            if not topic_nodes:
+                return Response(json.dumps({f'error': f'Historian topic {topic} not found on platform: {platform}.'}),
+                                400, content_type='application/json')
+            points = historian_tree.leaves()
+
+        # TODO: Move this exception handling up to a wrapper.
+        except Timeout as e:
+            return Response(json.dumps({'error': f'RPC Timed Out: {e}'}), 504, content_type='application/json')
+        except Exception as e:
+            return Response(json.dumps({f'error': f'Error querying historian topic {topic}: {e}'}),
+                            400, content_type='application/json')
+
+        if request_method == 'GET':
+            read_all = query_params.get('read-all', False)
+            return_routes = query_params.get('routes', True)
+            return_values = query_params.get('values', True)
+
+            try:
+                if read_all or all([n.is_leaf() for n in topic_nodes]):
+                    # Either leaf values are explicitly requested, or all nodes are already points -- Return points:
+                    ret_dict = defaultdict(dict)
+
+                    if return_values:
+                        ret_values = self._rpc('platform.historian', 'query',
+                                               [d.topic for d in points], start, end, agg_type, agg_period, skip, count,
+                                               order, on_platform=platform)
+
+                        # TODO: check return type for ret_values and based on that code
+                        # to match single and multiple topics query results into the same structure
+                        ret_values['values'] = ret_values['values'] if isinstance(ret_values['values'], dict) else {
+                            points[0].topic: ret_values['values']}
+
+                        for k, v in ret_values['values'].items():
+                            ret_dict[k]['value'] = v
+                        for k, m in ret_values['metadata'].items():
+                            ret_dict[k]['metadata'] = m
+                    for point in points:
+                        if return_routes:
+                            ret_dict[point.topic][
+                                'route'] = f'/vui/platforms/{platform}/historians/{historian}/{point.identifier}'
+
+                    return Response(json.dumps(ret_dict), 200, content_type='application/json')
+
+                else:
+                    # All topics are not complete to points and read_all=False -- return route to next segments:
+                    ret_dict = historian_tree.get_children_dict([n.identifier for n in topic_nodes],
+                                                                replace_topic=topic,
+                                                                prefix=f'/vui/platforms/{platform}')
+                    return Response(json.dumps(ret_dict), 200, content_type='application/json')
+
+
+            # TODO: Move this exception handling up to a wrapper.
+            except Timeout as e:
+                return Response(json.dumps({'error': f'RPC Timed Out: {e}'}), 504, content_type='application/json')
+            except Exception as e:
+                return Response(json.dumps({f'error': f'Error querying historian topic {topic}: {e}'}),
                                 400, content_type='application/json')
 
         else:
